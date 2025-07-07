@@ -1,0 +1,32 @@
+{
+  "project_id": "your-gcp-project-id",
+  "location": "us-central1",
+  "bucket_name": "your-storage-bucket",
+  "embedding_model": "textembedding-gecko@003",
+  "llm_model": "gemini-1.5-flash-001",
+  "chunk_size": 500,
+  "chunk_overlap": 100,
+  "similarity_threshold": 0.6,
+  "max_chunks": 5,
+  "vector_search": {
+    "index_endpoint": "projects/your-project/locations/us-central1/indexEndpoints/your-index-endpoint",
+    "deployed_index_id": "your-deployed-index-id"
+  },
+  "hybrid_retrieval": {
+    "faiss_weight": 0.6,
+    "vertex_weight": 0.4,
+    "max_results_per_source": 10,
+    "rrf_constant": 60
+  },
+  "cache": {
+    "embeddings_cache_file": "cache/embeddings_cache.pkl",
+    "chunks_cache_file": "cache/chunks_cache.json",
+    "max_cache_size": 10000
+  },
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "debug": false,
+    "max_file_size": "50MB"
+  }
+} 
