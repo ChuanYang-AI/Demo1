@@ -556,12 +556,12 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[客户端请求] --> B{请求类型}
-    B -->|GET /health| C[健康检查]
-    B -->|POST /upload| D[文档上传]
-    B -->|POST /chat| E[智能问答]
-    B -->|GET /documents| F[文档列表]
-    B -->|DELETE /documents/{id}| G[删除文档]
+    A[客户端请求] --> B{"请求类型"}
+    B -->|"GET /health"| C[健康检查]
+    B -->|"POST /upload"| D[文档上传]
+    B -->|"POST /chat"| E[智能问答]
+    B -->|"GET /documents"| F[文档列表]
+    B -->|"DELETE /documents/{id}"| G[删除文档]
     
     C --> H[返回系统状态]
     D --> I[处理文档]
