@@ -4,6 +4,20 @@ import time
 import re
 import html
 import logging
+try:
+    from .prompt_templates import (
+        get_prompt_template, 
+        SECURITY_KEYWORDS, 
+        PROFESSIONAL_FIELDS,
+        SUPPORTED_LANGUAGES
+    )
+except ImportError:
+    from prompt_templates import (
+        get_prompt_template, 
+        SECURITY_KEYWORDS, 
+        PROFESSIONAL_FIELDS,
+        SUPPORTED_LANGUAGES
+    )
 from datetime import datetime
 
 def sanitize_input(text: str) -> str:
@@ -81,7 +95,7 @@ def sanitize_input(text: str) -> str:
 
 def validate_query_safety(query: str) -> tuple[bool, str]:
     """
-    验证查询的安全性
+    验证查询的安全性，使用优化的安全规则
     
     Args:
         query: 用户查询
@@ -96,24 +110,38 @@ def validate_query_safety(query: str) -> tuple[bool, str]:
     if len(query) > 2000:
         return False, "查询内容过长，请简化问题"
     
-    # 检查是否包含明显的恶意内容
-    malicious_keywords = [
-        'hack', 'exploit', 'vulnerability', 'bypass', 'inject',
-        'sql injection', 'xss', 'csrf', 'buffer overflow',
-        'privilege escalation', 'backdoor', 'trojan', 'virus',
-        'malware', 'phishing', 'ddos', 'brute force'
-    ]
-    
+    # 使用优化的安全关键词检测
     query_lower = query.lower()
-    for keyword in malicious_keywords:
-        if keyword in query_lower:
-            logging.warning(f"[安全审计] 检测到恶意关键词: {keyword} in query: {query[:50]}...")
-            return False, f"查询包含不当内容: {keyword}"
+    
+    # 检测各类恶意关键词
+    for category, keywords in SECURITY_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in query_lower:
+                category_names = {
+                    "illegal": "违法内容",
+                    "harmful": "有害内容", 
+                    "inappropriate": "不当内容",
+                    "system": "系统信息",
+                    "privacy": "隐私信息",
+                    "professional": "专业服务"
+                }
+                logging.warning(f"[安全审计] 检测到{category_names.get(category, '敏感内容')}: {keyword} in query: {query[:50]}...")
+                return False, f"查询涉及{category_names.get(category, '敏感内容')}: {keyword}"
     
     # 检查是否包含过多的特殊字符（可能的编码攻击）
     special_char_ratio = len(re.findall(r'[^\w\s\u4e00-\u9fff]', query)) / len(query)
     if special_char_ratio > 0.3:
         return False, "查询包含过多特殊字符"
+    
+    # 检测重复字符模式（可能的DoS攻击）
+    if len(query) > 10:
+        char_counts = {}
+        for char in query:
+            char_counts[char] = char_counts.get(char, 0) + 1
+        
+        for char, count in char_counts.items():
+            if count / len(query) > 0.5:  # 单个字符占比超过50%
+                return False, f"检测到异常字符模式: {char}"
     
     return True, ""
 
@@ -200,6 +228,75 @@ def monitor_prompt_behavior(prompt: str, query: str) -> bool:
     
     return False
 
+def detect_professional_field(query: str) -> str:
+    """
+    检测查询是否涉及专业领域
+    
+    Args:
+        query: 用户查询
+        
+    Returns:
+        str: 专业领域类型，如果不涉及则返回空字符串
+    """
+    query_lower = query.lower()
+    
+    # 医疗相关关键词
+    medical_keywords = ["症状", "疾病", "治疗", "药物", "诊断", "医院", "医生", "患者", "病情", "头痛", "发烧", "感冒", "咳嗽", "疼痛", "不舒服", "难受"]
+    if any(keyword in query_lower for keyword in medical_keywords):
+        return "medical"
+    
+    # 法律相关关键词
+    legal_keywords = ["法律", "法规", "合同", "诉讼", "律师", "法院", "判决", "权利", "义务"]
+    if any(keyword in query_lower for keyword in legal_keywords):
+        return "legal"
+    
+    # 金融相关关键词
+    financial_keywords = ["投资", "理财", "股票", "基金", "保险", "贷款", "财务", "税务", "经济"]
+    if any(keyword in query_lower for keyword in financial_keywords):
+        return "financial"
+    
+    # 心理相关关键词
+    psychological_keywords = ["心理", "情绪", "抑郁", "焦虑", "咨询", "治疗", "压力", "心理健康"]
+    if any(keyword in query_lower for keyword in psychological_keywords):
+        return "psychological"
+    
+    return ""
+
+def create_security_rejection_response(rejection_reason: str) -> str:
+    """
+    创建安全拒绝响应
+    
+    Args:
+        rejection_reason: 拒绝原因
+        
+    Returns:
+        str: 格式化的拒绝响应
+    """
+    template = get_prompt_template("security_rejection")
+    return template.format(rejection_reason=rejection_reason)
+
+def create_professional_advice_response(answer: str, professional_field: str) -> str:
+    """
+    创建专业建议响应
+    
+    Args:
+        answer: 原始回答
+        professional_field: 专业领域
+        
+    Returns:
+        str: 格式化的专业建议响应
+    """
+    if professional_field in PROFESSIONAL_FIELDS:
+        field_info = PROFESSIONAL_FIELDS[professional_field]
+        template = get_prompt_template("professional_advice")
+        return template.format(
+            answer=answer,
+            professional_field=field_info["field"],
+            professional_type=field_info["type"],
+            source_identifier="🧠 *基于AI知识*"
+        )
+    return answer
+
 def generate_answer_with_llm(query: str, retrieved_chunks: list[str], sources: list[dict] = None, similarity_threshold: float = 0.6) -> dict:
     """
     结合检索到的文本和用户查询，使用LLM生成回答。
@@ -217,8 +314,9 @@ def generate_answer_with_llm(query: str, retrieved_chunks: list[str], sources: l
     is_safe, error_msg = validate_query_safety(query)
     if not is_safe:
         print(f"[安全] 查询安全检查失败: {error_msg}")
+        security_response = create_security_rejection_response(error_msg)
         return {
-            "answer": f"抱歉，您的查询存在安全问题：{error_msg}。请重新输入您的问题。",
+            "answer": security_response,
             "source": "security_error",
             "confidence": 0,
             "processing_time": 0,
@@ -255,71 +353,27 @@ def generate_answer_with_llm(query: str, retrieved_chunks: list[str], sources: l
     start = time.time()
     model = GenerativeModel('gemini-2.0-flash-001')
 
-    # 根据相似度选择不同的回答策略
+    # 根据相似度选择不同的回答策略，使用优化的prompt模板
     if use_rag and retrieved_chunks:
         # 高相似度：纯RAG模式
         context = "\n\n".join(retrieved_chunks)
-        prompt = create_safe_prompt("""
-你是一个智能知识问答助手。检索到的文档内容与用户问题高度相关，请基于以下文档内容回答。
-
-**检索到的文档内容：**
-{context}
-
-**用户问题：** {query}
-
-**回答要求：**
-- 基于文档内容进行回答
-- 回答要清晰简洁，易于理解
-- 使用简单的markdown格式（加粗、列表等）
-- 避免过长的段落，适当分段
-- 回答结尾添加："📖 *基于检索文档*"
-
-**回答：**
-""", context=context, query=query)
+        prompt_template = get_prompt_template("rag_high")
+        prompt = create_safe_prompt(prompt_template, context=context, query=query)
         answer_source = "rag"
         confidence = max_similarity
         
     elif use_hybrid and retrieved_chunks:
         # 中等相似度：混合模式
         context = "\n\n".join(retrieved_chunks)
-        prompt = create_safe_prompt("""
-你是一个智能知识问答助手。检索到的文档内容与用户问题有一定相关性，请结合文档和知识回答。
-
-**检索到的文档内容：**
-{context}
-
-**用户问题：** {query}
-
-**回答要求：**
-- 先分析文档中的相关信息
-- 结合基础知识提供完整准确的答案
-- 回答要清晰简洁，分点说明
-- 使用简单的markdown格式（**加粗**、- 列表等）
-- 避免过长的段落和复杂表格
-- 回答结尾添加："🔄 *结合文档和知识*"
-
-**回答：**
-""", context=context, query=query)
+        prompt_template = get_prompt_template("hybrid")
+        prompt = create_safe_prompt(prompt_template, context=context, query=query)
         answer_source = "hybrid"
         confidence = max_similarity
         
     else:
         # 低相似度：基础知识模式
-        prompt = create_safe_prompt("""
-你是一个智能知识问答助手。请基于你的知识回答用户的问题。
-
-**用户问题：** {query}
-
-**回答要求：**
-- 提供准确、易懂的解释
-- 分点说明关键信息
-- 使用简单的markdown格式（**加粗**、- 列表等）
-- 回答要简洁明了，避免冗长
-- 如果是专业问题，提醒用户咨询专家
-- 回答结尾添加："🧠 *基于AI知识*"
-
-**回答：**
-""", query=query)
+        prompt_template = get_prompt_template("knowledge")
+        prompt = create_safe_prompt(prompt_template, query=query)
         answer_source = "knowledge"
         confidence = 0.5  # 基础知识回答给予中等置信度
     
@@ -346,6 +400,11 @@ def generate_answer_with_llm(query: str, retrieved_chunks: list[str], sources: l
             answer = response.candidates[0].content.parts[0].text
             processing_time = time.time() - start
             
+            # 检测专业领域并添加相应提醒
+            professional_field = detect_professional_field(query)
+            if professional_field and answer_source == "knowledge":
+                answer = create_professional_advice_response(answer, professional_field)
+            
             # 构建返回结果
             result = {
                 "answer": answer,
@@ -354,7 +413,8 @@ def generate_answer_with_llm(query: str, retrieved_chunks: list[str], sources: l
                 "processing_time": processing_time,
                 "use_rag": use_rag or use_hybrid,
                 "use_hybrid": use_hybrid,
-                "max_similarity": max(source.get('similarity', 0) for source in sources) if sources else 0
+                "max_similarity": max(source.get('similarity', 0) for source in sources) if sources else 0,
+                "professional_field": professional_field
             }
             
             print(f"[LLM] 生成回答: {answer[:200]} ...")
